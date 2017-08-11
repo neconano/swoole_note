@@ -18,7 +18,7 @@ env:
 
 #Compile
 before_script:
-    - chmod +x travis
+    - chmod -R +x travis
     - travis/compile.sh
 
 script:
