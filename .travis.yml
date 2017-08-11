@@ -18,7 +18,7 @@ env:
 
 #Compile
 before_script:
-    - sudo ./travis/compile.sh
+    - travis/compile.sh
 
 script:
     - exit 0
