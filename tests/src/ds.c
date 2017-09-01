@@ -4,7 +4,7 @@
 #include "rbtree.h"
 #include <netinet/tcp.h>
 #include "tests.h"
-
+#include "hashmap.h"
 
 typedef struct
 {

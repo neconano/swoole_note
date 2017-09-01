@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "swoole.h": "c",
+        "server.h": "c",
+        "tests.h": "c",
+        "connection.h": "c"
+    }
+}
