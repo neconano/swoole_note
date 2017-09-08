@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 
 static int swMutex_lock(swLock *lock);
@@ -26,11 +10,19 @@ int swMutex_create(swLock *lock, int use_in_process)
     int ret;
     bzero(lock, sizeof(swLock));
     lock->type = SW_MUTEX;
+    // pthread_mutexattr_init方法用于初始化一个pthread_mutexattr_t结构体，
+    // 并默认设置其pshared属性为PTHREAD_PROCESS_PRIVATE（表示可以在进程内使用该互斥锁）。
     pthread_mutexattr_init(&lock->object.mutex.attr);
     if (use_in_process == 1)
     {
+        // 设置该锁的共享属性为PTHREAD_PROCESS_SHARED（进程间共享）
+        // pthread_mutexattr_setpshared方法用来设置互斥锁变量的作用域。
+        // PTHREAD_PROCESS_SHARED表示该互斥锁可被多个进程共享使用（前提是该互斥锁是在共享内存中创建）。
+        // PTHREAD_PROCESS_PRIVATE表示该互斥锁仅能被那些由同一个进程创建的线程处理。
         pthread_mutexattr_setpshared(&lock->object.mutex.attr, PTHREAD_PROCESS_SHARED);
     }
+    // pthread_mutex_init方法以动态方式创建互斥锁，并通过参数attr指定互斥锁属性。
+    // 如果参数attr为空，则默认创建快速互斥锁。
     if ((ret = pthread_mutex_init(&lock->object.mutex._lock, &lock->object.mutex.attr)) < 0)
     {
         return SW_ERR;

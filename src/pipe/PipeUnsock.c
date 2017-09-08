@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 #include "buffer.h"
 #include <sys/ipc.h>
@@ -24,6 +8,7 @@ static int swPipeUnsock_write(swPipe *p, void *data, int length);
 static int swPipeUnsock_getFd(swPipe *p, int isWriteFd);
 static int swPipeUnsock_close(swPipe *p);
 
+// PipeUnsock使用了socketpair函数和AF_UNIX（Unix Socket）来创建一个全双工的“管道”
 typedef struct _swPipeUnsock
 {
     int socks[2];
@@ -57,7 +42,9 @@ int swPipeUnsock_create(swPipe *p, int blocking, int protocol)
         swWarn("malloc() failed.");
         return SW_ERR;
     }
+    // 设置管道阻塞类型
     p->blocking = blocking;
+    // 调用socketpair获取两个套接字，并指定套接字类型为AF_UNIX
     ret = socketpair(AF_UNIX, protocol, 0, object->socks);
     if (ret < 0)
     {
@@ -67,12 +54,14 @@ int swPipeUnsock_create(swPipe *p, int blocking, int protocol)
     else
     {
         //Nonblock
+        // 如果管道为非阻塞类型，则调用swSetNonBlock函数设置套接字属性
         if (blocking == 0)
         {
             swSetNonBlock(object->socks[0]);
             swSetNonBlock(object->socks[1]);
         }
 
+        // 然后指定socket buffer 的大小
         int sbsize = SwooleG.socket_buffer_size;
         swSocket_set_buffer_size(object->socks[0], sbsize);
         swSocket_set_buffer_size(object->socks[1], sbsize);

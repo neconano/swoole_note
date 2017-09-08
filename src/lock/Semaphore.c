@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 #include <sys/sem.h>
 
@@ -50,7 +34,7 @@ static int swSem_unlock(swLock *lock)
     struct sembuf sem;
     sem.sem_flg = SEM_UNDO;
     sem.sem_num = 0;
-    sem.sem_op = 1;
+    sem.sem_op = 1; // 设置sem_op为1（释放资源）
     return semop(lock->object.sem.semid, &sem, 1);
 }
 
@@ -59,7 +43,7 @@ static int swSem_lock(swLock *lock)
     struct sembuf sem;
     sem.sem_flg = SEM_UNDO;
     sem.sem_num = 0;
-    sem.sem_op = -1;
+    sem.sem_op = -1; // 设置sem_op为-1（请求资源）
     return semop(lock->object.sem.semid, &sem, 1);
 }
 

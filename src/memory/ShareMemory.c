@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 #include <sys/shm.h>
 
@@ -25,9 +9,7 @@ void* sw_shm_malloc(size_t size)
     size += sizeof(swShareMemory);
     mem = swShareMemory_mmap_create(&object, size, NULL);
     if (mem == NULL)
-    {
         return NULL;
-    }
     else
     {
         memcpy(mem, &object, sizeof(swShareMemory));
@@ -89,44 +71,41 @@ void* sw_shm_realloc(void *ptr, size_t new_size)
     }
 }
 
+// 使用内存映射文件的共享内存
 void *swShareMemory_mmap_create(swShareMemory *object, int size, char *mapfile)
 {
-    void *mem;
-    int tmpfd = -1;
-    int flag = MAP_SHARED;
-    bzero(object, sizeof(swShareMemory));
-
-#ifdef MAP_ANONYMOUS
-    flag |= MAP_ANONYMOUS;
-#else
-    if(mapfile == NULL)
-    {
-        mapfile = "/dev/zero";
-    }
-    if((tmpfd = open(mapfile, O_RDWR)) < 0)
-    {
-        return NULL;
-    }
-    strncpy(object->mapfile, mapfile, SW_SHM_MMAP_FILE_LEN);
-    object->tmpfd = tmpfd;
-#endif
-
-    mem = mmap(NULL, size, PROT_READ | PROT_WRITE, flag, tmpfd, 0);
-#ifdef MAP_FAILED
-    if (mem == MAP_FAILED)
-#else
-    if (!mem)
-#endif
-    {
-        swWarn("mmap() failed. Error: %s[%d]", strerror(errno), errno);
-        return NULL;
-    }
-    else
-    {
-        object->size = size;
-        object->mem = mem;
-        return mem;
-    }
+        void *mem;
+        int tmpfd = -1;
+        int flag = MAP_SHARED;
+        bzero(object, sizeof(swShareMemory));
+    // 该宏定义在 mman-linux.h 内 #define MAP_ANONYMOUS 0x20
+    #ifdef MAP_ANONYMOUS
+        flag |= MAP_ANONYMOUS;
+    #else
+        if(mapfile == NULL)
+            mapfile = "/dev/zero";
+        if((tmpfd = open(mapfile, O_RDWR)) < 0)
+            return NULL;
+        strncpy(object->mapfile, mapfile, SW_SHM_MMAP_FILE_LEN);
+        object->tmpfd = tmpfd;
+    #endif
+        // 通过mmap打开大小为size的映射内存，指定内存可读可写
+        mem = mmap(NULL, size, PROT_READ | PROT_WRITE, flag, tmpfd, 0);
+    #ifdef MAP_FAILED
+        if (mem == MAP_FAILED)
+    #else
+        if (!mem)
+    #endif
+        {
+            swWarn("mmap() failed. Error: %s[%d]", strerror(errno), errno);
+            return NULL;
+        }
+        else
+        {
+            object->size = size;
+            object->mem = mem;
+            return mem;
+        }
 }
 
 int swShareMemory_mmap_free(swShareMemory *object)
@@ -134,22 +113,21 @@ int swShareMemory_mmap_free(swShareMemory *object)
     return munmap(object->mem, object->size);
 }
 
+// 使用shm系列函数的共享内存
 void *swShareMemory_sysv_create(swShareMemory *object, int size, int key)
 {
     int shmid;
     void *mem;
     bzero(object, sizeof(swShareMemory));
-
     if (key == 0)
-    {
         key = IPC_PRIVATE;
-    }
     //SHM_R | SHM_W |
     if ((shmid = shmget(key, size, IPC_CREAT)) < 0)
     {
         swWarn("shmget() failed. Error: %s[%d]", strerror(errno), errno);
         return NULL;
     }
+    // 调用shmat方法获取到shmid对应的共享内存首地址
     if ((mem = shmat(shmid, NULL, 0)) < 0)
     {
         swWarn("shmat() failed. Error: %s[%d]", strerror(errno), errno);

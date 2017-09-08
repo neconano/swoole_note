@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 #include "Server.h"
 
@@ -115,7 +99,7 @@ static sw_inline int swWorker_discard_data(swServer *serv, swEventData *task)
         }
     }
     discard_data:
-#ifdef SW_USE_RINGBUFFER
+    #ifdef SW_USE_RINGBUFFER
     if (task->info.type == SW_EVENT_PACKAGE)
     {
         swPackage package;
@@ -125,22 +109,23 @@ static sw_inline int swWorker_discard_data(swServer *serv, swEventData *task)
         swWarn("[1]received the wrong data[%d bytes] from socket#%d", package.length, fd);
     }
     else
-#endif
+    #endif
     {
         swWarn("[1]received the wrong data[%d bytes] from socket#%d", task->info.len, fd);
     }
     return SW_TRUE;
 }
 
+// 处理一个worker接收到的swEventData* task
 int swWorker_onTask(swFactory *factory, swEventData *task)
 {
     swServer *serv = factory->ptr;
     swString *package = NULL;
     swDgramPacket *header;
 
-#ifdef SW_USE_OPENSSL
+    #ifdef SW_USE_OPENSSL
     swConnection *conn;
-#endif
+    #endif
 
     factory->last_from_id = task->info.from_id;
     //worker busy
@@ -148,108 +133,100 @@ int swWorker_onTask(swFactory *factory, swEventData *task)
 
     switch (task->info.type)
     {
-    //no buffer
-    case SW_EVENT_TCP:
-    //ringbuffer shm package
-    case SW_EVENT_PACKAGE:
-        //discard data
-        if (swWorker_discard_data(serv, task) == SW_TRUE)
-        {
+        // SW_EVENT_TCP、SW_EVENT_UDP、SW_EVENT_UNIX_DGRAM这三种类型没有缓存区
+        case SW_EVENT_TCP:
+        // ringbuffer shm package
+        // SW_EVENT_PACKAGE是RingBuffer共享内存池的包，因为该package是完整的不需要拼接
+        case SW_EVENT_PACKAGE:
+            //discard data
+            if (swWorker_discard_data(serv, task) == SW_TRUE)
+                break;
+            do_task:
+            {
+                serv->onReceive(serv, task);
+                SwooleWG.request_count++;
+                sw_atomic_fetch_add(&SwooleStats->request_count, 1);
+            }
+            if (task->info.type == SW_EVENT_PACKAGE_END)
+                package->length = 0;
             break;
-        }
-        do_task:
-        {
-            serv->onReceive(serv, task);
-            SwooleWG.request_count++;
-            sw_atomic_fetch_add(&SwooleStats->request_count, 1);
-        }
-        if (task->info.type == SW_EVENT_PACKAGE_END)
-        {
-            package->length = 0;
-        }
-        break;
 
-    //chunk package
-    case SW_EVENT_PACKAGE_START:
-    case SW_EVENT_PACKAGE_END:
-        //discard data
-        if (swWorker_discard_data(serv, task) == SW_TRUE)
-        {
+        //chunk package
+        // SW_EVENT_PACKAGE_START 获取reactor对应的缓存，将task的data放入缓存区中
+        case SW_EVENT_PACKAGE_START:
+        // SW_EVENT_PACKAGE_END 所有数据发送完毕
+        case SW_EVENT_PACKAGE_END:
+            //discard data
+            if (swWorker_discard_data(serv, task) == SW_TRUE)
+                break;
+            package = swWorker_get_buffer(serv, task->info.from_id);
+            //merge data to package buffer
+            memcpy(package->str + package->length, task->data, task->info.len);
+            package->length += task->info.len;
+            //package end
+            if (task->info.type == SW_EVENT_PACKAGE_END)
+                goto do_task;
             break;
-        }
-        package = swWorker_get_buffer(serv, task->info.from_id);
-        //merge data to package buffer
-        memcpy(package->str + package->length, task->data, task->info.len);
-        package->length += task->info.len;
 
-        //package end
-        if (task->info.type == SW_EVENT_PACKAGE_END)
-        {
-            goto do_task;
-        }
-        break;
+        case SW_EVENT_UDP:
+        case SW_EVENT_UDP6:
+        case SW_EVENT_UNIX_DGRAM:
+            package = swWorker_get_buffer(serv, task->info.from_id);
+            swString_append_ptr(package, task->data, task->info.len);
 
-    case SW_EVENT_UDP:
-    case SW_EVENT_UDP6:
-    case SW_EVENT_UNIX_DGRAM:
-        package = swWorker_get_buffer(serv, task->info.from_id);
-        swString_append_ptr(package, task->data, task->info.len);
+            if (package->offset == 0)
+            {
+                header = (swDgramPacket *) package->str;
+                package->offset = header->length;
+            }
 
-        if (package->offset == 0)
-        {
-            header = (swDgramPacket *) package->str;
-            package->offset = header->length;
-        }
+            //one packet
+            if (package->offset == package->length - sizeof(swDgramPacket))
+            {
+                SwooleWG.request_count++;
+                sw_atomic_fetch_add(&SwooleStats->request_count, 1);
+                serv->onPacket(serv, task);
+                swString_clear(package);
+            }
+            break;
 
-        //one packet
-        if (package->offset == package->length - sizeof(swDgramPacket))
-        {
-            SwooleWG.request_count++;
-            sw_atomic_fetch_add(&SwooleStats->request_count, 1);
-            serv->onPacket(serv, task);
-            swString_clear(package);
-        }
-        break;
-
-    case SW_EVENT_CLOSE:
-#ifdef SW_USE_OPENSSL
-        conn = swServer_connection_verify(serv, task->info.fd);
-        if (conn && conn->ssl_client_cert.length)
-        {
-            free(conn->ssl_client_cert.str);
-            bzero(&conn->ssl_client_cert, sizeof(conn->ssl_client_cert.str));
-        }
-#endif
-        factory->end(factory, task->info.fd);
-        break;
-
-    case SW_EVENT_CONNECT:
-#ifdef SW_USE_OPENSSL
-        //SSL client certificate
-        if (task->info.len > 0)
-        {
+        case SW_EVENT_CLOSE:
+            #ifdef SW_USE_OPENSSL
             conn = swServer_connection_verify(serv, task->info.fd);
-            conn->ssl_client_cert.str = strndup(task->data, task->info.len);
-            conn->ssl_client_cert.size = conn->ssl_client_cert.length = task->info.len;
-        }
-#endif
-        if (serv->onConnect)
-        {
-            serv->onConnect(serv, task->info.fd, task->info.from_id);
-        }
-        break;
+            if (conn && conn->ssl_client_cert.length)
+            {
+                free(conn->ssl_client_cert.str);
+                bzero(&conn->ssl_client_cert, sizeof(conn->ssl_client_cert.str));
+            }
+            #endif
+            factory->end(factory, task->info.fd);
+            break;
 
-    case SW_EVENT_FINISH:
-        serv->onFinish(serv, task);
-        break;
+        case SW_EVENT_CONNECT:
+            #ifdef SW_USE_OPENSSL
+            //SSL client certificate
+            if (task->info.len > 0)
+            {
+                conn = swServer_connection_verify(serv, task->info.fd);
+                conn->ssl_client_cert.str = strndup(task->data, task->info.len);
+                conn->ssl_client_cert.size = conn->ssl_client_cert.length = task->info.len;
+            }
+            #endif
+            if (serv->onConnect)
+                serv->onConnect(serv, task->info.fd, task->info.from_id);
+            break;
 
-    case SW_EVENT_PIPE_MESSAGE:
-        serv->onPipeMessage(serv, task);
-        break;
+        case SW_EVENT_FINISH:
+            serv->onFinish(serv, task);
+            break;
 
-    default:
-        swWarn("[Worker] error event[type=%d]", (int )task->info.type);
-        break;
+        case SW_EVENT_PIPE_MESSAGE:
+            serv->onPipeMessage(serv, task);
+            break;
+
+        default:
+            swWarn("[Worker] error event[type=%d]", (int )task->info.type);
+            break;
     }
 
     //worker idle
@@ -394,60 +371,53 @@ void swWorker_clean(void)
  */
 int swWorker_loop(swFactory *factory, int worker_id)
 {
-    swServer *serv = factory->ptr;
+        swServer *serv = factory->ptr;
+        #ifndef SW_WORKER_USE_SIGNALFD
+        SwooleG.use_signalfd = 0;
+        #endif
+        //worker_id
+        SwooleWG.id = worker_id;
+        SwooleWG.request_count = 0;
+        SwooleG.pid = getpid();
 
-#ifndef SW_WORKER_USE_SIGNALFD
-    SwooleG.use_signalfd = 0;
-#endif
+        //signal init
+        swWorker_signal_init();
+        swWorker *worker = swServer_get_worker(serv, worker_id);
+        swServer_worker_init(serv, worker);
 
-    //worker_id
-    SwooleWG.id = worker_id;
-    SwooleWG.request_count = 0;
-    SwooleG.pid = getpid();
+        SwooleG.main_reactor = sw_malloc(sizeof(swReactor));
+        if (SwooleG.main_reactor == NULL)
+        {
+            swError("[Worker] malloc for reactor failed.");
+            return SW_ERR;
+        }
+        if (swReactor_create(SwooleG.main_reactor, SW_REACTOR_MAXEVENTS) < 0)
+        {
+            swError("[Worker] create worker_reactor failed.");
+            return SW_ERR;
+        }
+        serv->workers[worker_id].status = SW_WORKER_IDLE;
+        int pipe_worker = serv->workers[worker_id].pipe_worker;
 
-    //signal init
-    swWorker_signal_init();
-    swWorker *worker = swServer_get_worker(serv, worker_id);
-    swServer_worker_init(serv, worker);
+        swSetNonBlock(pipe_worker);
+        SwooleG.main_reactor->ptr = serv;
+        SwooleG.main_reactor->add(SwooleG.main_reactor, pipe_worker, SW_FD_PIPE | SW_EVENT_READ);
+        SwooleG.main_reactor->setHandle(SwooleG.main_reactor, SW_FD_PIPE, swWorker_onPipeReceive);
+        SwooleG.main_reactor->setHandle(SwooleG.main_reactor, SW_FD_PIPE | SW_FD_WRITE, swReactor_onWrite);
 
-    SwooleG.main_reactor = sw_malloc(sizeof(swReactor));
-    if (SwooleG.main_reactor == NULL)
-    {
-        swError("[Worker] malloc for reactor failed.");
-        return SW_ERR;
-    }
+        swWorker_onStart(serv);
 
-    if (swReactor_create(SwooleG.main_reactor, SW_REACTOR_MAXEVENTS) < 0)
-    {
-        swError("[Worker] create worker_reactor failed.");
-        return SW_ERR;
-    }
-    
-    serv->workers[worker_id].status = SW_WORKER_IDLE;
-
-    int pipe_worker = serv->workers[worker_id].pipe_worker;
-
-    swSetNonBlock(pipe_worker);
-    SwooleG.main_reactor->ptr = serv;
-    SwooleG.main_reactor->add(SwooleG.main_reactor, pipe_worker, SW_FD_PIPE | SW_EVENT_READ);
-    SwooleG.main_reactor->setHandle(SwooleG.main_reactor, SW_FD_PIPE, swWorker_onPipeReceive);
-    SwooleG.main_reactor->setHandle(SwooleG.main_reactor, SW_FD_PIPE | SW_FD_WRITE, swReactor_onWrite);
-
-    swWorker_onStart(serv);
-
-#ifdef HAVE_SIGNALFD
-    if (SwooleG.use_signalfd)
-    {
-        swSignalfd_setup(SwooleG.main_reactor);
-    }
-#endif
-    //main loop
-    SwooleG.main_reactor->wait(SwooleG.main_reactor, NULL);
-    //clear pipe buffer
-    swWorker_clean();
-    //worker shutdown
-    swWorker_onStop(serv);
-    return SW_OK;
+        #ifdef HAVE_SIGNALFD
+        if (SwooleG.use_signalfd)
+            swSignalfd_setup(SwooleG.main_reactor);
+        #endif
+        //main loop
+        SwooleG.main_reactor->wait(SwooleG.main_reactor, NULL);
+        //clear pipe buffer
+        swWorker_clean();
+        //worker shutdown
+        swWorker_onStop(serv);
+        return SW_OK;
 }
 
 /**

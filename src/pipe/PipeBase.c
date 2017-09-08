@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 
 static int swPipeBase_read(swPipe *p, void *data, int length);
@@ -21,9 +5,10 @@ static int swPipeBase_write(swPipe *p, void *data, int length);
 static int swPipeBase_getFd(swPipe *p, int isWriteFd);
 static int swPipeBase_close(swPipe *p);
 
+// swoole基于pipe函数用于创建一个管道,进行了一层封装用于简化操作
 typedef struct _swPipeBase
 {
-    int pipes[2];
+    int pipes[2]; // 存放pipe的读端fd和写端fd
 } swPipeBase;
 
 int swPipeBase_create(swPipe *p, int blocking)
@@ -44,6 +29,7 @@ int swPipeBase_create(swPipe *p, int blocking)
     else
     {
         //Nonblock
+        // 如果创建管道成功，若管道为非阻塞模式，则调用swSetNonBlock函数,设置两个fd为非阻塞
         swSetNonBlock(object->pipes[0]);
         swSetNonBlock(object->pipes[1]);
         p->timeout = -1;
@@ -61,11 +47,12 @@ static int swPipeBase_read(swPipe *p, void *data, int length)
     swPipeBase *object = p->object;
     if (p->blocking == 1 && p->timeout > 0)
     {
+        // 如果该管道为阻塞模式，且指定了timeout时间，则调用swSocket_wait函数执行等待，若超时，则返回SW_ERR
         if (swSocket_wait(object->pipes[0], p->timeout * 1000, SW_EVENT_READ) < 0)
-        {
             return SW_ERR;
-        }
     }
+    // 此时，若管道为非阻塞模式，因已经指定了fd的options，
+    // 所以read方法不会阻塞；若为阻塞模式，则read函数会一直阻塞到有数据可读
     return read(object->pipes[0], data, length);
 }
 
@@ -78,6 +65,7 @@ static int swPipeBase_write(swPipe *p, void *data, int length)
 static int swPipeBase_getFd(swPipe *p, int isWriteFd)
 {
     swPipeBase *this = p->object;
+    // 根据 isWriteFd 判定返回 写fd 或者 读fd
     return (isWriteFd == 0) ? this->pipes[0] : this->pipes[1];
 }
 

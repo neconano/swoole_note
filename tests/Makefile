@@ -15,7 +15,7 @@ TARGETS = opxl
 
 inc_dirs := $(foreach dir,$(INC_DIR), -I$(dir) )
 # 引入声明文件目录
-CFLAGS := -g $(inc_dirs)
+CFLAGS := -g $(inc_dirs) -D HAVE_EPOLL
 # 动态连接非默认库
 LDFLAGS = -pthread -lpthread -ldl
 
@@ -95,7 +95,7 @@ ALL_OBJ = $(ALL_O) $(CORE_O) $(NETWORK_O) $(MEM_O) $(FAC_O) $(LOCK_O) $(OS_O) $(
 
 #-D HAVE_EPOLL 等价于在头文件中定义：#define HAVE_EPOLL 1
 all:$(ALL_SRC)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(ALL_OBJ) -o $(BIN_DIR)/$(TARGETS)  -D HAVE_EPOLL
+	$(CC) $(CFLAGS) $(LDFLAGS) $(ALL_OBJ) -o $(BIN_DIR)/$(TARGETS)
 
 #编译依赖
 $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c

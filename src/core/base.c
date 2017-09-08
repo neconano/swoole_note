@@ -1,19 +1,3 @@
-/*
- +----------------------------------------------------------------------+
- | Swoole                                                               |
- +----------------------------------------------------------------------+
- | This source file is subject to version 2.0 of the Apache license,    |
- | that is bundled with this package in the file LICENSE, and is        |
- | available through the world-wide-web at the following url:           |
- | http://www.apache.org/licenses/LICENSE-2.0.html                      |
- | If you did not receive a copy of the Apache2.0 license and are unable|
- | to obtain it through the world-wide-web, please send a note to       |
- | license@swoole.com so we can mail you a copy immediately.            |
- +----------------------------------------------------------------------+
- | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
- +----------------------------------------------------------------------+
- */
-
 #include "swoole.h"
 #include "atomic.h"
 
@@ -23,37 +7,31 @@
 
 void swoole_init(void)
 {
+    // Resouce limit指在一个进程的执行过程中，它所能得到的资源的限制，比如进程的core file的最大值，虚拟内存的最大值等。
     struct rlimit rlmt;
     if (SwooleG.running)
-    {
         return;
-    }
 
-    bzero(&SwooleG, sizeof(SwooleG));
+    // 初始化
+    bzero(&SwooleG, sizeof(SwooleG));// 结构体变量重置
     bzero(&SwooleWG, sizeof(SwooleWG));
-    bzero(sw_error, SW_ERROR_MSG_SIZE);
-
-    SwooleG.running = 1;
+    bzero(sw_error, SW_ERROR_MSG_SIZE); // char sw_error[SW_ERROR_MSG_SIZE];
     sw_errno = 0;
-
+    SwooleG.running = 1;
     SwooleG.log_fd = STDOUT_FILENO;
-    SwooleG.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
-    SwooleG.pagesize = getpagesize();
-    SwooleG.pid = getpid();
+    SwooleG.cpu_num = sysconf(_SC_NPROCESSORS_ONLN);// 系统当前可用的核数
+    SwooleG.pagesize = getpagesize();// 获得一页内存大小（系统给我们提供真正的内存时，用页为单位提供）
+    SwooleG.pid = getpid();// 当前进程标识
+    uname(&SwooleG.uname);// 获取当前内核的名称
 
-    //get system uname
-    uname(&SwooleG.uname);
-
-#if defined(HAVE_REUSEPORT) && defined(HAVE_EPOLL)
+    // 支持套接字和epoll，并且内核版本大于3.9.0
+    #if defined(HAVE_REUSEPORT) && defined(HAVE_EPOLL)
     if (swoole_version_compare(SwooleG.uname.release, "3.9.0") >= 0)
-    {
         SwooleG.reuse_port = 1;
-    }
-#endif
+    #endif
 
     //random seed
     srandom(time(NULL));
-
     //init global shared memory
     SwooleG.memory_pool = swMemoryGlobal_new(SW_GLOBAL_MEMORY_PAGESIZE, 1);
     if (SwooleG.memory_pool == NULL)
@@ -100,6 +78,45 @@ void swoole_init(void)
     }
     swoole_update_time();
 }
+
+
+// 对比内核版本
+int swoole_version_compare(char *version1, char *version2)
+{
+    int result = 0;
+    while (result == 0)
+    {
+        char* tail1;
+        char* tail2;
+        unsigned long ver1 = strtoul(version1, &tail1, 10); // string to unsigned long
+        unsigned long ver2 = strtoul(version2, &tail2, 10);
+        if (ver1 < ver2)
+            result = -1;
+        else if (ver1 > ver2)
+            result = +1;
+        else
+        {
+            version1 = tail1;
+            version2 = tail2;
+            if (*version1 == '\0' && *version2 == '\0')
+                break;
+            else if (*version1 == '\0')
+                result = -1;
+            else if (*version2 == '\0')
+                result = +1;
+            else
+            {
+                version1++;
+                version2++;
+            }
+        }
+    }
+    return result;
+}
+
+
+
+
 
 void swoole_clean(void)
 {
@@ -354,52 +371,6 @@ void swoole_update_time(void)
     }
 }
 
-int swoole_version_compare(char *version1, char *version2)
-{
-    int result = 0;
-
-    while (result == 0)
-    {
-        char* tail1;
-        char* tail2;
-
-        unsigned long ver1 = strtoul(version1, &tail1, 10);
-        unsigned long ver2 = strtoul(version2, &tail2, 10);
-
-        if (ver1 < ver2)
-        {
-            result = -1;
-        }
-        else if (ver1 > ver2)
-        {
-            result = +1;
-        }
-        else
-        {
-            version1 = tail1;
-            version2 = tail2;
-            if (*version1 == '\0' && *version2 == '\0')
-            {
-                break;
-            }
-            else if (*version1 == '\0')
-            {
-                result = -1;
-            }
-            else if (*version2 == '\0')
-            {
-                result = +1;
-            }
-            else
-            {
-                version1++;
-                version2++;
-            }
-        }
-    }
-    return result;
-}
-
 uint64_t swoole_ntoh64(uint64_t n64)
 {
     uint32_t tmp;
@@ -640,15 +611,10 @@ void swoole_ioctl_set_block(int sock, int nonblock)
 {
     int ret;
     do
-    {
         ret = ioctl(sock, FIONBIO, &nonblock);
-    }
     while (ret == -1 && errno == EINTR);
-
     if (ret < 0)
-    {
         swSysError("ioctl(%d, FIONBIO, %d) failed.", sock, nonblock);
-    }
 }
 
 void swoole_fcntl_set_block(int sock, int nonblock)

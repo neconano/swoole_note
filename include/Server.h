@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@php.net so we can mail you a copy immediately.               |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #ifndef SW_SERVER_H_
 #define SW_SERVER_H_
 
@@ -159,6 +143,7 @@ typedef struct
 //-----------------------------------Factory--------------------------------------------
 typedef struct
 {
+    // 目标worker进程的id
     long target_worker_id;
     swEventData data;
 } swDispatchData;
@@ -174,13 +159,14 @@ struct _swFactory
     int (*start)(struct _swFactory *);
     int (*shutdown)(struct _swFactory *);
     int (*dispatch)(struct _swFactory *, swDispatchData *);
-    int (*finish)(struct _swFactory *, swSendData *);
+    int (*finish)(struct _swFactory *, swSendData *);   //factory worker finish.callback
     int (*notify)(struct _swFactory *, swDataHead *);    //send a event notify
     int (*end)(struct _swFactory *, int fd);
 };
 
 typedef struct _swFactoryProcess
 {
+    // 存放用于进程间通信的管道，从后续实现分析这个Pipe仅用于接收其他进程发来的消息
     swPipe *pipes;
 } swFactoryProcess;
 
@@ -196,6 +182,7 @@ int swFactory_create(swFactory *factory);
 int swFactory_start(swFactory *factory);
 int swFactory_shutdown(swFactory *factory);
 int swFactory_dispatch(swFactory *factory, swDispatchData *req);
+// swFactory_finish是一个通道，它的作用是将task运行结束后的数据发送给对应的Reactor
 int swFactory_finish(swFactory *factory, swSendData *_send);
 int swFactory_notify(swFactory *factory, swDataHead *event);
 int swFactory_end(swFactory *factory, int fd);
@@ -669,74 +656,59 @@ static sw_inline swWorker* swServer_get_worker(swServer *serv, uint16_t worker_i
 
 static sw_inline uint32_t swServer_worker_schedule(swServer *serv, uint32_t schedule_key)
 {
-    uint32_t target_worker_id = 0;
+        uint32_t target_worker_id = 0;
 
-    //polling mode
-    if (serv->dispatch_mode == SW_DISPATCH_ROUND)
-    {
-        target_worker_id = sw_atomic_fetch_add(&serv->worker_round_id, 1) % serv->worker_num;
-    }
-    //Using the FD touch access to hash
-    else if (serv->dispatch_mode == SW_DISPATCH_FDMOD)
-    {
-        target_worker_id = schedule_key % serv->worker_num;
-    }
-    //Using the IP touch access to hash
-    else if (serv->dispatch_mode == SW_DISPATCH_IPMOD)
-    {
-        swConnection *conn = swServer_connection_get(serv, schedule_key);
-        //UDP
-        if (conn == NULL)
-        {
-            target_worker_id = schedule_key % serv->worker_num;
-        }
-        //IPv4
-        else if (conn->socket_type == SW_SOCK_TCP)
-        {
-            target_worker_id = conn->info.addr.inet_v4.sin_addr.s_addr % serv->worker_num;
-        }
-        //IPv6
-        else
-        {
-#ifdef HAVE_KQUEUE
-            uint32_t ipv6_last_int = *(((uint32_t *) &conn->info.addr.inet_v6.sin6_addr) + 3);
-            target_worker_id = ipv6_last_int % serv->worker_num;
-#else
-            target_worker_id = conn->info.addr.inet_v6.sin6_addr.s6_addr32[3] % serv->worker_num;
-#endif
-        }
-    }
-    else if (serv->dispatch_mode == SW_DISPATCH_UIDMOD)
-    {
-        swConnection *conn = swServer_connection_get(serv, schedule_key);
-        if (conn == NULL)
-        {
-            target_worker_id = schedule_key % serv->worker_num;
-        }
-        else if (conn->uid)
-        {
-            target_worker_id = conn->uid % serv->worker_num;
-        }
-        else
-        {
-            target_worker_id = schedule_key % serv->worker_num;
-        }
-    }
-    //Preemptive distribution
-    else
-    {
-        int i;
-        for (i = 0; i < serv->worker_num + 1; i++)
-        {
+        //polling mode 轮询模式
+        if (serv->dispatch_mode == SW_DISPATCH_ROUND)
             target_worker_id = sw_atomic_fetch_add(&serv->worker_round_id, 1) % serv->worker_num;
-            if (serv->workers[target_worker_id].status == SW_WORKER_IDLE)
+        //Using the FD touch access to hash
+        // 根据FD取模（同一个fd一定会被同一个worker进程处理）
+        else if (serv->dispatch_mode == SW_DISPATCH_FDMOD)
+            target_worker_id = schedule_key % serv->worker_num;
+        //Using the IP touch access to hash
+        else if (serv->dispatch_mode == SW_DISPATCH_IPMOD)
+        {
+            swConnection *conn = swServer_connection_get(serv, schedule_key);
+            //UDP
+            if (conn == NULL)
+                target_worker_id = schedule_key % serv->worker_num;
+            //IPv4
+            else if (conn->socket_type == SW_SOCK_TCP)
+                target_worker_id = conn->info.addr.inet_v4.sin_addr.s_addr % serv->worker_num;
+            //IPv6
+            else
             {
-                break;
+                #ifdef HAVE_KQUEUE
+                uint32_t ipv6_last_int = *(((uint32_t *) &conn->info.addr.inet_v6.sin6_addr) + 3);
+                target_worker_id = ipv6_last_int % serv->worker_num;
+                #else
+                target_worker_id = conn->info.addr.inet_v6.sin6_addr.s6_addr32[3] % serv->worker_num;
+                #endif
             }
         }
-        //swWarn("schedule=%d|round=%d\n", target_worker_id, *round);
-    }
-    return target_worker_id;
+        else if (serv->dispatch_mode == SW_DISPATCH_UIDMOD)
+        {
+            swConnection *conn = swServer_connection_get(serv, schedule_key);
+            if (conn == NULL)
+                target_worker_id = schedule_key % serv->worker_num;
+            else if (conn->uid)
+                target_worker_id = conn->uid % serv->worker_num;
+            else
+                target_worker_id = schedule_key % serv->worker_num;
+        }
+        //Preemptive distribution
+        else
+        {
+            int i;
+            for (i = 0; i < serv->worker_num + 1; i++)
+            {
+                target_worker_id = sw_atomic_fetch_add(&serv->worker_round_id, 1) % serv->worker_num;
+                if (serv->workers[target_worker_id].status == SW_WORKER_IDLE)
+                    break;
+            }
+            //swWarn("schedule=%d|round=%d\n", target_worker_id, *round);
+        }
+        return target_worker_id;
 }
 
 void swServer_worker_onStart(swServer *serv);

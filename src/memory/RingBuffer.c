@@ -1,31 +1,19 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 
+// 类似循环队列，alloc_offset和collect_offset就是标记队头和队尾的标记，
+// 每一次分配内存就相当于入队，每一次释放内存就相当于出队
+// 因为RingBuffer采用的是连续分配，可能会存在一些已经被free的内存块夹在两个没有free的内存块中间，
+// 没有被立即回收，就需要一个变量去通知内存池回收这些内存
 typedef struct
 {
-    uint8_t shared;
-    uint8_t status;
-    uint32_t size;
-    uint32_t alloc_offset;
-    uint32_t collect_offset;
+    uint8_t shared; // 可共享
+    uint8_t status; 
+    uint32_t size; // 内存池大小
+    uint32_t alloc_offset; // 分配内存的起始长度
+    uint32_t collect_offset; // 可用内存的终止长度
     uint32_t alloc_count;
     sw_atomic_t free_count;
-    void *memory;
+    void *memory; // 内存池的起始地址
 } swRingBuffer;
 
 typedef struct
@@ -50,6 +38,7 @@ static void swRingBuffer_print(swRingBuffer *object, char *prefix)
 }
 #endif
 
+// 创建过程与swFixedPool_new类似
 swMemoryPool *swRingBuffer_new(uint32_t size, uint8_t shared)
 {
     void *mem = (shared == 1) ? sw_shm_malloc(size) : sw_malloc(size);
@@ -81,6 +70,7 @@ swMemoryPool *swRingBuffer_new(uint32_t size, uint8_t shared)
     return pool;
 }
 
+// 用于回收已经不被占用的内存
 static void swRingBuffer_collect(swRingBuffer *object)
 {
     swRingBuffer_item *item;

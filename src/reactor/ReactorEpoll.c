@@ -1,28 +1,21 @@
-/*
- +----------------------------------------------------------------------+
- | Swoole                                                               |
- +----------------------------------------------------------------------+
- | This source file is subject to version 2.0 of the Apache license,    |
- | that is bundled with this package in the file LICENSE, and is        |
- | available through the world-wide-web at the following url:           |
- | http://www.apache.org/licenses/LICENSE-2.0.html                      |
- | If you did not receive a copy of the Apache2.0 license and are unable|
- | to obtain it through the world-wide-web, please send a note to       |
- | license@swoole.com so we can mail you a copy immediately.            |
- +----------------------------------------------------------------------+
- | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
- +----------------------------------------------------------------------+
- */
-
+// epoll是Linux内核提供的一个多路复用I/O模型，它提供和poll函数一样的功能：监控多个文件描
+// 述符是否处于I/O就绪状态（可读、可写）。这就是异步最核心的表现：程序不是主动等待一个描
+// 述符可以操作，而是当描述符可操作时由系统提醒程序可以操作了，程序在被提醒前可以去做其他的事情
+// 水平触发（Level-triggered）和边缘触发（edge-triggered）是epoll的两种模式，它们的区别在于：水平触发模式下，
+// 当一个fd就绪之后，如果没有对该fd进行操作，则系统会继续发出就绪通知直到该fd被操作；
+// 边缘触发模式下，当一个fd就绪后，系统仅会发出一次就绪通知。
 #include "swoole.h"
 
 #ifdef HAVE_EPOLL
 #include <sys/epoll.h>
+
+// EPOLLRDHUP代表的意义是对端断开连接，这个宏是用于弥补epoll在处理对端断开连接时可能会出现的一处Bug
 #ifndef EPOLLRDHUP
 #define EPOLLRDHUP   0x2000
 #define NO_EPOLLRDHUP
 #endif
 
+// EPOLLONESHOT用于标记epoll对于每个socket仅监听一次事件，如果需要再次监听这个socket，需要再次将该socket加入epoll的监听队列中
 #ifndef EPOLLONESHOT
 #define EPOLLONESHOT (1u << 30)
 #endif
@@ -106,6 +99,7 @@ int swReactorEpoll_create(swReactor *reactor, int max_event_num)
 static void swReactorEpoll_free(swReactor *reactor)
 {
     swReactorEpoll *object = reactor->object;
+    // 关闭epoll实例的描述符，并释放申请的内存空间
     close(object->epfd);
     sw_free(object->events);
     sw_free(object);
@@ -201,103 +195,96 @@ static int swReactorEpoll_set(swReactor *reactor, int fd, int fdtype)
     return SW_OK;
 }
 
+
 static int swReactorEpoll_wait(swReactor *reactor, struct timeval *timeo)
 {
-    swEvent event;
-    swReactorEpoll *object = reactor->object;
-    swReactor_handle handle;
-    int i, n, ret, msec;
+        // event是相应事件数据的封装，是回调函数handle的第二个参数
+        swEvent event;
+        swReactorEpoll *object = reactor->object;
+        swReactor_handle handle;
+        // n为每一次epoll_wait响应后返回的当前处于就绪状态的fd的数量
+        int i, n, ret, msec;
 
-    int reactor_id = reactor->id;
-    int epoll_fd = object->epfd;
-    int max_event_num = reactor->max_event_num;
-    struct epoll_event *events = object->events;
-
-    if (reactor->timeout_msec == 0)
-    {
-        if (timeo == NULL)
+        int reactor_id = reactor->id;
+        int epoll_fd = object->epfd;
+        int max_event_num = reactor->max_event_num;
+        // events用于存放epoll函数发现的处于就绪状态的事件
+        struct epoll_event *events = object->events;
+        if (reactor->timeout_msec == 0)
         {
-            reactor->timeout_msec = -1;
-        }
-        else
-        {
-            reactor->timeout_msec = timeo->tv_sec * 1000 + timeo->tv_usec / 1000;
-        }
-    }
-
-    while (reactor->running > 0)
-    {
-        msec = reactor->timeout_msec;
-        n = epoll_wait(epoll_fd, events, max_event_num, msec);
-        if (n < 0)
-        {
-            if (swReactor_error(reactor) < 0)
-            {
-                swWarn("[Reactor#%d] epoll_wait failed. Error: %s[%d]", reactor_id, strerror(errno), errno);
-                return SW_ERR;
-            }
+            if (timeo == NULL)
+                reactor->timeout_msec = -1;
             else
+                reactor->timeout_msec = timeo->tv_sec * 1000 + timeo->tv_usec / 1000;
+        }
+        while (reactor->running > 0)
+        {
+            msec = reactor->timeout_msec;
+            // 调用epoll_wait函数获取已经处于就绪状态的fd的集合，该集合存放在events结构体数组中，其数目为返回值n
+            // 如果没有任何描述符处于就绪状态，该函数会阻塞直到有描述符就绪
+            // 如果在usec毫秒后仍没有描述符就绪，则返回0
+            n = epoll_wait(epoll_fd, events, max_event_num, msec);
+            if (n < 0)
             {
+                if (swReactor_error(reactor) < 0)
+                {
+                    swWarn("[Reactor#%d] epoll_wait failed. Error: %s[%d]", reactor_id, strerror(errno), errno);
+                    return SW_ERR;
+                }
+                else
+                    continue;
+            }
+            else if (n == 0)
+            {
+                if (reactor->onTimeout != NULL)
+                    reactor->onTimeout(reactor);
                 continue;
             }
-        }
-        else if (n == 0)
-        {
-            if (reactor->onTimeout != NULL)
+            for (i = 0; i < n; i++)
             {
-                reactor->onTimeout(reactor);
-            }
-            continue;
-        }
-        for (i = 0; i < n; i++)
-        {
-            event.fd = events[i].data.u64;
-            event.from_id = reactor_id;
-            event.type = events[i].data.u64 >> 32;
-            event.socket = swReactor_get(reactor, event.fd);
+                event.fd = events[i].data.u64;
+                event.from_id = reactor_id;
+                // 低位32位存放的是uint32_t类型的fd
+                // 高位32位存放的是uint32_t类型的fdtype，该fdtype的取值为枚举类型swFd_type
+                event.type = events[i].data.u64 >> 32;
+                event.socket = swReactor_get(reactor, event.fd);
 
-            //read
-            if (events[i].events & EPOLLIN)
-            {
-                handle = swReactor_getHandle(reactor, SW_EVENT_READ, event.type);
-                ret = handle(reactor, &event);
-                if (ret < 0)
+                //read
+                // EPOLLIN 读事件，根据swEvent中的type类型（fdtype）获取对应的读操作的回调函数，通过该回调将swEvent类型发出
+                if (events[i].events & EPOLLIN)
                 {
-                    swSysError("EPOLLIN handle failed. fd=%d.", event.fd);
+                    handle = swReactor_getHandle(reactor, SW_EVENT_READ, event.type);
+                    ret = handle(reactor, &event);
+                    if (ret < 0)
+                        swSysError("EPOLLIN handle failed. fd=%d.", event.fd);
+                }
+                //write
+                // EPOLLOUT 写事件，根据swEvent中的type类型（fdtype）获取对应的写操作的回调函数，通过该回调将swEvent类型发出
+                if ((events[i].events & EPOLLOUT) && event.socket->fd && !event.socket->removed)
+                {
+                    handle = swReactor_getHandle(reactor, SW_EVENT_WRITE, event.type);
+                    ret = handle(reactor, &event);
+                    if (ret < 0)
+                        swSysError("EPOLLOUT handle failed. fd=%d.", event.fd);
+                }
+                //error
+                // 异常事件，根据swEvent中的type类型（fdtype）获取对应的异常操作的回调函数，通过该回调将swEvent类型发出
+                #ifndef NO_EPOLLRDHUP
+                if ((events[i].events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)) && event.socket->fd && !event.socket->removed)
+                #else
+                if ((events[i].events & (EPOLLERR | EPOLLHUP)) && !event.socket->removed)
+                #endif
+                {
+                    handle = swReactor_getHandle(reactor, SW_EVENT_ERROR, event.type);
+                    ret = handle(reactor, &event);
+                    if (ret < 0)
+                        swSysError("EPOLLERR handle failed. fd=%d.", event.fd);
                 }
             }
-            //write
-            if ((events[i].events & EPOLLOUT) && event.socket->fd && !event.socket->removed)
-            {
-                handle = swReactor_getHandle(reactor, SW_EVENT_WRITE, event.type);
-                ret = handle(reactor, &event);
-                if (ret < 0)
-                {
-                    swSysError("EPOLLOUT handle failed. fd=%d.", event.fd);
-                }
-            }
-            //error
-#ifndef NO_EPOLLRDHUP
-            if ((events[i].events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)) && event.socket->fd && !event.socket->removed)
-#else
-            if ((events[i].events & (EPOLLERR | EPOLLHUP)) && !event.socket->removed)
-#endif
-            {
-                handle = swReactor_getHandle(reactor, SW_EVENT_ERROR, event.type);
-                ret = handle(reactor, &event);
-                if (ret < 0)
-                {
-                    swSysError("EPOLLERR handle failed. fd=%d.", event.fd);
-                }
-            }
+            if (reactor->onFinish != NULL)
+                reactor->onFinish(reactor);
         }
-
-        if (reactor->onFinish != NULL)
-        {
-            reactor->onFinish(reactor);
-        }
-    }
-    return 0;
+        return 0;
 }
 
 #endif

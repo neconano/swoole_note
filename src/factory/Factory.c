@@ -1,19 +1,6 @@
-/*
- +----------------------------------------------------------------------+
- | Swoole                                                               |
- +----------------------------------------------------------------------+
- | This source file is subject to version 2.0 of the Apache license,    |
- | that is bundled with this package in the file LICENSE, and is        |
- | available through the world-wide-web at the following url:           |
- | http://www.apache.org/licenses/LICENSE-2.0.html                      |
- | If you did not receive a copy of the Apache2.0 license and are unable|
- | to obtain it through the world-wide-web, please send a note to       |
- | license@swoole.com so we can mail you a copy immediately.            |
- +----------------------------------------------------------------------+
- | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
- +----------------------------------------------------------------------+
- */
-
+// 根据类型的不同执行两项任务：Factory实现的功能是一个任务中心，一个task请求进入Factory，
+// 会进过dispatch分配、onTask处理、onFinish交付结果一系列流程；
+// FactoryProcess用于管理manager和worker进程，也有对单独的writer线程的管理。 
 #include "swoole.h"
 #include "Server.h"
 

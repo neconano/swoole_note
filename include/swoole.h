@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #ifndef SWOOLE_H_
 #define SWOOLE_H_
 
@@ -547,10 +531,10 @@ typedef struct _swDataHead
 
 typedef struct _swEvent
 {
-    int fd;
-    int16_t from_id;
-    uint8_t type;
-    swConnection *socket;
+    int fd; // 描述符
+    int16_t from_id; // 来自哪个reactor
+    uint8_t type; // 描述符类型
+    swConnection *socket; 
 } swEvent;
 
 typedef struct _swEventData
@@ -596,9 +580,9 @@ typedef void (*swReactor_callback)(swReactor *reactor);
 //------------------Pipe--------------------
 typedef struct _swPipe
 {
-    void *object;
-    int blocking;
-    double timeout;
+    void *object; // 指向具体的管道结构体（Base，Eventfd，Unsock）
+    int blocking; // 标记该管道是否是阻塞类型
+    double timeout; // 为阻塞的超时时间
 
     int (*read)(struct _swPipe *, void *recv, int length);
     int (*write)(struct _swPipe *, void *send, int length);
@@ -645,34 +629,35 @@ void swMsgQueue_free(swMsgQueue *p);
 //------------------Lock--------------------------------------
 enum SW_LOCKS
 {
-    SW_RWLOCK = 1,
+    SW_RWLOCK = 1, // 读写锁
 #define SW_RWLOCK SW_RWLOCK
-    SW_FILELOCK = 2,
+    SW_FILELOCK = 2, // 文件锁
 #define SW_FILELOCK SW_FILELOCK
-    SW_MUTEX = 3,
+    SW_MUTEX = 3, // 互斥锁
 #define SW_MUTEX SW_MUTEX
-    SW_SEM = 4,
+    SW_SEM = 4, // 信号量
 #define SW_SEM SW_SEM
-    SW_SPINLOCK = 5,
+    SW_SPINLOCK = 5, // 自旋锁
 #define SW_SPINLOCK SW_SPINLOCK
-    SW_ATOMLOCK = 6,
+    SW_ATOMLOCK = 6, // 原子锁
 #define SW_ATOMLOCK SW_ATOMLOCK
 };
 
 //文件锁
 typedef struct _swFileLock
 {
-    struct flock lock_t;
-    int fd;
+    struct flock lock_t; // 文件锁（http://www.gnu.org/software/libc/manual/html_node/File-Locks.html）
+    int fd; // 被锁控制的文件描述符
 } swFileLock;
 
 //互斥锁
 typedef struct _swMutex
 {
-    pthread_mutex_t _lock;
-    pthread_mutexattr_t attr;
+    pthread_mutex_t _lock; // 互斥锁对象
+    pthread_mutexattr_t attr; // 互斥锁的属性
 } swMutex;
 
+// 读写锁
 #ifdef HAVE_RWLOCK
 typedef struct _swRWLock
 {
@@ -682,6 +667,10 @@ typedef struct _swRWLock
 } swRWLock;
 #endif
 
+// 自旋锁
+// Spinlock本质上也是一种互斥锁，它和mutex的区别在于Spinlock是通过busy_wait_loop方式来获得锁，
+// 不会使线程状态发生切换（用户态->内核态）,因此减少了系统调用，执行速度快。
+// 但缺点也是有的，Spinlock会一直占用cpu，导致cpu busy飙高，因此要谨慎使用Spinlock。
 #ifdef HAVE_SPINLOCK
 typedef struct _swSpinLock
 {
@@ -689,33 +678,38 @@ typedef struct _swSpinLock
 } swSpinLock;
 #endif
 
+// 原子锁
+// 所谓原子操作，就是该操作绝不会在执行完毕前被任何其他任务或事件打断
+// 通常情况下，原子操作都是用于资源计数
 typedef struct _swAtomicLock
 {
     sw_atomic_t lock_t;
-    uint32_t spin;
+    uint32_t spin; // 一个原子锁可以等待的次数（为2的n次幂）
 } swAtomicLock;
 
+// 信号量
 typedef struct _swSem
 {
-    key_t key;
-    int semid;
+    key_t key; // 关键字，通常由ftok()返回
+    int semid; // 信号量id
 } swSem;
 
 typedef struct _swLock
 {
-	int type;
-    union
+    int type; // 锁的类型，取值于SW_LOCKS
+    // 锁的对象，保证在同一时刻，一个swLock只会存在一个类型的锁
+    union 
     {
-        swMutex mutex;
-#ifdef HAVE_RWLOCK
-        swRWLock rwlock;
-#endif
-#ifdef HAVE_SPINLOCK
-        swSpinLock spinlock;
-#endif
-        swFileLock filelock;
-        swSem sem;
-        swAtomicLock atomlock;
+            swMutex mutex;
+        #ifdef HAVE_RWLOCK
+            swRWLock rwlock;
+        #endif
+        #ifdef HAVE_SPINLOCK
+            swSpinLock spinlock;
+        #endif
+            swFileLock filelock;
+            swSem sem;
+            swAtomicLock atomlock;
     } object;
 
     int (*lock_rd)(struct _swLock *);
@@ -727,12 +721,16 @@ typedef struct _swLock
 } swLock;
 
 //Thread Condition
+// 条件变量
+// 条件变量的用处是使线程睡眠等待某种条件出现后唤醒线程，是利用线程间共享的全局变量进行同步的一种机制
+// 主要包括两个动作：一个是线程等待“条件成立”而挂起，另一个是线程使“条件成立”并发出信号
+// 为了防止竞争，条件变量通常与一个互斥锁结合在一起
 typedef struct _swCond
 {
-    swLock lock;
-    pthread_cond_t cond;
+    swLock lock; // 互斥锁
+    pthread_cond_t cond; // 条件变量对象
 
-    int (*wait)(struct _swCond *object);
+    int (*wait)(struct _swCond *object); // 四个操作函数
     int (*timewait)(struct _swCond *object, long, long);
     int (*notify)(struct _swCond *object);
     int (*broadcast)(struct _swCond *object);
@@ -741,64 +739,70 @@ typedef struct _swCond
 
 #define SW_SHM_MMAP_FILE_LEN  64
 
-typedef struct _swShareMemory_mmap
+typedef struct _swShareMemory_mmap_swShareMemory_mmap
 {
-    int size;
-    char mapfile[SW_SHM_MMAP_FILE_LEN];
-    int tmpfd;
-    int key;
-    int shmid;
-    void *mem;
+    int size; // 共享内存的大小(不包括swShareMemory结构体大小)
+    char mapfile[SW_SHM_MMAP_FILE_LEN]; // 共享内存使用的内存映射文件的文件名
+    int tmpfd; // 内存映射文件的描述符
+    int key; // shm系列函数创建的共享内存的key值
+    int shmid; // shm系列函数创建的共享内存的id（类似于fd）
+    void *mem; // 指向共享内存的起始地址
 } swShareMemory;
-
+// 使用内存映射文件的共享内存
 void *swShareMemory_mmap_create(swShareMemory *object, int size, char *mapfile);
+int swShareMemory_mmap_free(swShareMemory *object);
+// 使用shm系列函数的共享内存
 void *swShareMemory_sysv_create(swShareMemory *object, int size, int key);
 int swShareMemory_sysv_free(swShareMemory *object, int rm);
-int swShareMemory_mmap_free(swShareMemory *object);
 
 //-------------------memory manager-------------------------
+
+// 为了更好的进行内存管理，减少频繁分配释放内存空间造成的损耗和内存碎片
+// Swoole中设计并实现了三种不同功能的MemoryPool：FixedPool，RingBuffer和MemoryGlobal
 typedef struct _swMemoryPool
 {
-	void *object;
-	void* (*alloc)(struct _swMemoryPool *pool, uint32_t size);
-	void (*free)(struct _swMemoryPool *pool, void *ptr);
-	void (*destroy)(struct _swMemoryPool *pool);
+	void *object; // 用于标记内存池的首地址
+	void* (*alloc)(struct _swMemoryPool *pool, uint32_t size); // 从内存池中拿到一块内存
+	void (*free)(struct _swMemoryPool *pool, void *ptr); // 释放一块内存
+	void (*destroy)(struct _swMemoryPool *pool); // 销毁整个内存池
 } swMemoryPool;
 
+// FixedPool是随机分配内存池(random alloc/free)，将一整块内存空间切分成等大小的一个个小块，
+// 每次分配其中的一个小块作为要使用的内存，这些小块以链表的形式存储
 typedef struct _swFixedPool_slice
 {
-    uint8_t lock;
-    struct _swFixedPool_slice *next;
-    struct _swFixedPool_slice *pre;
-    char data[0];
+    uint8_t lock; // 标记该节点是否被占用（0代表空闲，1代表已占用）
+    struct _swFixedPool_slice *next; // 该节点的后继指针
+    struct _swFixedPool_slice *pre; // 前驱指针
+    char data[0]; // 内存空间指针（http://blog.csdn.net/liuaigui/article/details/3680404）
 
 } swFixedPool_slice;
 
 typedef struct _swFixedPool
 {
-    void *memory;
-    size_t size;
+    void *memory; // 内存指针，指向一片内存空间
+    size_t size; // 内存空间大小
 
-    swFixedPool_slice *head;
-    swFixedPool_slice *tail;
+    swFixedPool_slice *head; // 链表头部节点
+    swFixedPool_slice *tail; // 链表尾部节点，两个指针用于快速访问和移动节点
 
     /**
-     * total memory size
+     * total memory size，节点数目
      */
     uint32_t slice_num;
 
     /**
-     * memory usage
+     * memory usage，已经使用的节点
      */
     uint32_t slice_use;
 
     /**
-     * Fixed slice size, not include the memory used by swFixedPool_slice
+     * Fixed slice size, not include the memory used by swFixedPool_slice，节点大小
      */
     uint32_t slice_size;
 
     /**
-     * use shared memory
+     * use shared memory，是否共享内存
      */
     uint8_t shared;
 
@@ -1116,52 +1120,24 @@ typedef struct _swReactor_finish_callback
 
 struct _swReactor
 {
-    void *object;
+    void *object; // 实际reactor模型的内存地址
     void *ptr;  //reserve
-
-    /**
-     * last signal number
-     */
-    int singal_no;
-
-    uint32_t event_num;
-    uint32_t max_event_num;
-
+    int singal_no; // last signal number
+    uint32_t event_num; // 现有的事件数目
+    uint32_t max_event_num; // 允许持有的最大事件数目
     uint32_t check_timer :1;
-    uint32_t running :1;
-
-    /**
-     * disable accept new connection
-     */
-    uint32_t disable_accept :1;
-
+    uint32_t running :1; // 标记该reactor是否正在运行
+    uint32_t disable_accept :1; // disable accept new connection
     uint32_t check_signalfd :1;
-
-    /**
-     * multi-thread reactor, cannot realloc sockets.
-     */
-    uint32_t thread :1;
-
-	/**
-	 * reactor->wait timeout (millisecond) or -1
-	 */
-	int32_t timeout_msec;
-
+    uint32_t thread :1; // multi-thread reactor, cannot realloc sockets.
+	int32_t timeout_msec; // reactor->wait timeout (millisecond) or -1
 	uint16_t id; //Reactor ID
 	uint16_t flag; //flag
-
     uint32_t max_socket;
+    swConnection *socket_list; // for thread
+    swArray *socket_array; // for process
 
-    /**
-     * for thread
-     */
-    swConnection *socket_list;
-
-    /**
-     * for process
-     */
-    swArray *socket_array;
-
+    // 存放需要监听的事件的响应回调函数
     swReactor_handle handle[SW_MAX_FDTYPE];        //默认事件
     swReactor_handle write_handle[SW_MAX_FDTYPE];  //扩展事件1(一般为写事件)
     swReactor_handle error_handle[SW_MAX_FDTYPE];  //扩展事件2(一般为错误事件,如socket关闭)
@@ -1333,21 +1309,25 @@ static sw_inline int swReactor_error(swReactor *reactor)
     return SW_ERR;
 }
 
+// 判定是否为读事件和其他swFd_type类型的监听
 static sw_inline int swReactor_event_read(int fdtype)
 {
     return (fdtype < SW_EVENT_DEAULT) || (fdtype & SW_EVENT_READ);
 }
 
+// 判定是否为事件监听
 static sw_inline int swReactor_event_write(int fdtype)
 {
     return fdtype & SW_EVENT_WRITE;
 }
 
+// 判定是否为错误事件监听
 static sw_inline int swReactor_event_error(int fdtype)
 {
     return fdtype & SW_EVENT_ERROR;
 }
 
+// 过滤fdtype中的读、写、错误事件标记
 static sw_inline int swReactor_fdtype(int fdtype)
 {
     return fdtype & (~SW_EVENT_READ) & (~SW_EVENT_WRITE) & (~SW_EVENT_ERROR);
@@ -1357,17 +1337,11 @@ static sw_inline int swReactor_events(int fdtype)
 {
     int events = 0;
     if (swReactor_event_read(fdtype))
-    {
         events |= SW_EVENT_READ;
-    }
     if (swReactor_event_write(fdtype))
-    {
         events |= SW_EVENT_WRITE;
-    }
     if (swReactor_event_error(fdtype))
-    {
         events |= SW_EVENT_ERROR;
-    }
     return events;
 }
 
@@ -1728,6 +1702,7 @@ int swoole_sendfile(int out_fd, int in_fd, off_t *offset, size_t size);
 #define swoole_sendfile(out_fd, in_fd, offset, limit)    sendfile(out_fd, in_fd, offset, limit)
 #endif
 
+// 尝试申请atomic锁，如果失败就等待一段时间后再次申请，每次失败后等待的时间会加长
 static sw_inline void sw_spinlock(sw_atomic_t *lock)
 {
     uint32_t i, n;
@@ -1739,19 +1714,21 @@ static sw_inline void sw_spinlock(sw_atomic_t *lock)
         }
         if (SW_CPU_NUM > 1)
         {
+            // 每次循环结束后将n的值左移一位（值*2，这就是为何spin的值要是2的幂）
             for (n = 1; n < SW_SPINLOCK_LOOP_N; n <<= 1)
             {
                 for (i = 0; i < n; i++)
                 {
                     sw_atomic_cpu_pause();
                 }
-
+                // 尝试设置atomic的值为1
                 if (*lock == 0 && sw_atomic_cmp_set(lock, 0, 1))
                 {
                     return;
                 }
             }
         }
+        // 如果CPU的数目为1或者直到内循环结束也没有设置成功atomic，就调用swYield方法交出线程的使用权
         swYield();
     }
 }

@@ -1,23 +1,8 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 
 #define SW_PAGE_SIZE  256
 
+// 内存控制
 typedef struct _swMemoryGlobal
 {
     int size;  //总容量
@@ -38,27 +23,23 @@ static void* swMemoryGlobal_new_page(swMemoryGlobal *gm);
 swMemoryPool* swMemoryGlobal_new(int pagesize, char shared)
 {
     swMemoryGlobal gm, *gm_ptr;
+    // 条件返回错误，则终止程序执行
     assert(pagesize >= SW_PAGE_SIZE);
     bzero(&gm, sizeof(swMemoryGlobal));
     gm.shared = shared;
     gm.pagesize = pagesize;
+    // 使用前8个字节保存next指针
     void *first_page = swMemoryGlobal_new_page(&gm);
     if (first_page == NULL)
-    {
         return NULL;
-    }
     //分配内存需要加锁
     if(swMutex_create(&gm.lock, 1) < 0)
-    {
         return NULL;
-    }
-    //root
+        
     gm.root_page = first_page;
     gm.cur_page = first_page;
-
     gm_ptr = (swMemoryGlobal *) gm.mem;
     gm.offset += sizeof(swMemoryGlobal);
-
     swMemoryPool *allocator = (swMemoryPool *) (gm.mem + gm.offset);
     gm.offset += sizeof(swMemoryPool);
 
@@ -78,9 +59,7 @@ static void* swMemoryGlobal_new_page(swMemoryGlobal *gm)
 {
     void *page = (gm->shared == 1) ? sw_shm_malloc(gm->pagesize) : sw_malloc(gm->pagesize);
     if (page == NULL)
-    {
         return NULL;
-    }
     bzero(page, gm->pagesize);
     //将next设置为NULL
     ((void **)page)[0] = NULL;

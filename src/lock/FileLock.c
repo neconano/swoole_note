@@ -1,21 +1,6 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 
+// 其中rd代表读锁，rw代表写锁
 static int swFileLock_lock_rd(swLock *lock);
 static int swFileLock_lock_rw(swLock *lock);
 static int swFileLock_unlock(swLock *lock);
@@ -37,36 +22,43 @@ int swFileLock_create(swLock *lock, int fd)
     return 0;
 }
 
+// 申请文件读锁RDLOCK
 static int swFileLock_lock_rd(swLock *lock)
 {
     lock->object.filelock.lock_t.l_type = F_RDLCK;
+    // 测试锁（http://www.cnblogs.com/papam/archive/2009/09/02/1559154.html）
     return fcntl(lock->object.filelock.fd, F_SETLKW, &lock->object.filelock);
 }
 
+// 申请文件写锁
 static int swFileLock_lock_rw(swLock *lock)
 {
     lock->object.filelock.lock_t.l_type = F_WRLCK;
     return fcntl(lock->object.filelock.fd, F_SETLKW, &lock->object.filelock);
 }
 
+// 释放文件锁
 static int swFileLock_unlock(swLock *lock)
 {
     lock->object.filelock.lock_t.l_type = F_UNLCK;
     return fcntl(lock->object.filelock.fd, F_SETLKW, &lock->object.filelock);
 }
 
+// 尝试是否能申请写锁
 static int swFileLock_trylock_rw(swLock *lock)
 {
     lock->object.filelock.lock_t.l_type = F_WRLCK;
     return fcntl(lock->object.filelock.fd, F_SETLK, &lock->object.filelock);
 }
 
+// 尝试是否能申请读锁
 static int swFileLock_trylock_rd(swLock *lock)
 {
     lock->object.filelock.lock_t.l_type = F_RDLCK;
     return fcntl(lock->object.filelock.fd, F_SETLK, &lock->object.filelock);
 }
 
+// 调用close函数释放锁
 static int swFileLock_free(swLock *lock)
 {
     return close(lock->object.filelock.fd);

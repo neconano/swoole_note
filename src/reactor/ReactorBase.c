@@ -1,19 +1,3 @@
-/*
-  +----------------------------------------------------------------------+
-  | Swoole                                                               |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 2.0 of the Apache license,    |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.apache.org/licenses/LICENSE-2.0.html                      |
-  | If you did not receive a copy of the Apache2.0 license and are unable|
-  | to obtain it through the world-wide-web, please send a note to       |
-  | license@swoole.com so we can mail you a copy immediately.            |
-  +----------------------------------------------------------------------+
-  | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
-  +----------------------------------------------------------------------+
-*/
-
 #include "swoole.h"
 #include "Connection.h"
 #include "async.h"
@@ -25,94 +9,98 @@ static void swReactor_atLoopEnd(swReactor *reactor, swReactor_callback callback)
 
 int swReactor_create(swReactor *reactor, int max_event)
 {
-    int ret;
-    bzero(reactor, sizeof(swReactor));
+        int ret;
+        bzero(reactor, sizeof(swReactor));
 
-    //event less than SW_REACTOR_MINEVENTS, use poll/select
-    if (max_event <= SW_REACTOR_MINEVENTS)
-    {
-#ifdef SW_MAINREACTOR_USE_POLL
-        ret = swReactorPoll_create(reactor, SW_REACTOR_MINEVENTS);
-#else
-        ret = swReactorSelect_create(reactor);
-#endif
-    }
-    //use epoll or kqueue
-    else
-    {
-#ifdef HAVE_EPOLL
-        ret = swReactorEpoll_create(reactor, max_event);
-#elif defined(HAVE_KQUEUE)
-        ret = swReactorKqueue_create(reactor, max_event);
-#elif defined(SW_MAINREACTOR_USE_POLL)
-        ret = swReactorPoll_create(reactor, max_event);
-#else
-        ret = swReactorSelect_create(reactor);
-#endif
-    }
+        // 根据环境编译中定义的参数决定使用哪种类型的reactor模型，主线程默认使用poll模型
+        //event less than SW_REACTOR_MINEVENTS, use poll/select
+        if (max_event <= SW_REACTOR_MINEVENTS)
+        {
+            #ifdef SW_MAINREACTOR_USE_POLL
+                ret = swReactorPoll_create(reactor, SW_REACTOR_MINEVENTS);
+            #else
+                ret = swReactorSelect_create(reactor);
+            #endif
+        }
+        //use epoll or kqueue
+        else
+        {
+            #ifdef HAVE_EPOLL
+                ret = swReactorEpoll_create(reactor, max_event);
+            #elif defined(HAVE_KQUEUE)
+                ret = swReactorKqueue_create(reactor, max_event);
+            #elif defined(SW_MAINREACTOR_USE_POLL)
+                ret = swReactorPoll_create(reactor, max_event);
+            #else
+                ret = swReactorSelect_create(reactor);
+            #endif
+        }
 
-    reactor->running = 1;
+        reactor->running = 1;
 
-    reactor->setHandle = swReactor_setHandle;
-    reactor->atLoopEnd = swReactor_atLoopEnd;
+        reactor->setHandle = swReactor_setHandle;
+        reactor->atLoopEnd = swReactor_atLoopEnd;
 
-    reactor->onFinish = swReactor_onFinish;
-    reactor->onTimeout = swReactor_onTimeout;
+        reactor->onFinish = swReactor_onFinish;
+        reactor->onTimeout = swReactor_onTimeout;
 
-    reactor->write = swReactor_write;
-    reactor->close = swReactor_close;
+        reactor->write = swReactor_write;
+        reactor->close = swReactor_close;
 
-    reactor->socket_array = swArray_new(1024, sizeof(swConnection));
-    if (!reactor->socket_array)
-    {
-        swWarn("create socket array failed.");
-        return SW_ERR;
-    }
+        reactor->socket_array = swArray_new(1024, sizeof(swConnection));
+        if (!reactor->socket_array)
+        {
+            swWarn("create socket array failed.");
+            return SW_ERR;
+        }
 
-    return ret;
+        return ret;
 }
 
+// 用于获取相应的回调函数
 swReactor_handle swReactor_getHandle(swReactor *reactor, int event_type, int fdtype)
 {
+    // 判定事件类型是否为写事件
     if (event_type == SW_EVENT_WRITE)
     {
+        // 默认可写回调函数SW_FD_WRITE
+        // 判定参数fdtype指定的回调是否存在，如果不存在，默认返回SW_FD_WRITE回调，否则返回fdtype对应的回调
         return (reactor->write_handle[fdtype] != NULL) ? reactor->write_handle[fdtype] : reactor->handle[SW_FD_WRITE];
     }
+    // 判定事件类型是否为异常事件
     if (event_type == SW_EVENT_ERROR)
     {
+        // 默认关闭回调函数SW_FD_CLOSE
+        // 判定参数fdtype指定的回调是否存在，
+        // 如果不存在，默认返回SW_FD_CLOSE回调，否则返回fdtype对应的回调
         return (reactor->error_handle[fdtype] != NULL) ? reactor->error_handle[fdtype] : reactor->handle[SW_FD_CLOSE];
     }
     return reactor->handle[fdtype];
 }
 
+// 设置相应的回调函数
 int swReactor_setHandle(swReactor *reactor, int _fdtype, swReactor_handle handle)
 {
+    // 去掉_fdtype参数中的SW_EVENTS类型变量，获取原始的swFd_type类型变量fdtype
     int fdtype = swReactor_fdtype(_fdtype);
-
     if (fdtype >= SW_MAX_FDTYPE)
     {
         swWarn("fdtype > SW_MAX_FDTYPE[%d]", SW_MAX_FDTYPE);
         return SW_ERR;
     }
-
+    // 使用swReactor_event_*系列函数判定_fdtype的实际类型
+    // 将回调函数存入reactor中对应的回调函数数组中
     if (swReactor_event_read(_fdtype))
-    {
         reactor->handle[fdtype] = handle;
-    }
     else if (swReactor_event_write(_fdtype))
-    {
         reactor->write_handle[fdtype] = handle;
-    }
     else if (swReactor_event_error(_fdtype))
-    {
         reactor->error_handle[fdtype] = handle;
-    }
     else
     {
         swWarn("unknow fdtype");
         return SW_ERR;
     }
-
     return SW_OK;
 }
 

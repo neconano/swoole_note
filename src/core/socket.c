@@ -1,19 +1,3 @@
-/*
- +----------------------------------------------------------------------+
- | Swoole                                                               |
- +----------------------------------------------------------------------+
- | This source file is subject to version 2.0 of the Apache license,    |
- | that is bundled with this package in the file LICENSE, and is        |
- | available through the world-wide-web at the following url:           |
- | http://www.apache.org/licenses/LICENSE-2.0.html                      |
- | If you did not receive a copy of the Apache2.0 license and are unable|
- | to obtain it through the world-wide-web, please send a note to       |
- | license@swoole.com so we can mail you a copy immediately.            |
- +----------------------------------------------------------------------+
- | Author: Tianfeng Han  <mikan.tenny@gmail.com>                        |
- +----------------------------------------------------------------------+
- */
-
 #include "swoole.h"
 
 #include <sys/stat.h>
@@ -82,33 +66,27 @@ void swSocket_clean(int fd)
 int swSocket_wait(int fd, int timeout_ms, int events)
 {
     struct pollfd event;
+    // 指定监听的fd
     event.fd = fd;
     event.events = 0;
 
     if (events & SW_EVENT_READ)
-    {
         event.events |= POLLIN;
-    }
     if (events & SW_EVENT_WRITE)
-    {
         event.events |= POLLOUT;
-    }
     while (1)
     {
+        // 循环中调用poll函数监听，若成功监听到事件，则返回SW_OK
         int ret = poll(&event, 1, timeout_ms);
         if (ret == 0)
-        {
             return SW_ERR;
-        }
         else if (ret < 0 && errno != EINTR)
         {
             swWarn("poll() failed. Error: %s[%d]", strerror(errno), errno);
             return SW_ERR;
         }
         else
-        {
             return SW_OK;
-        }
     }
     return SW_OK;
 }
